@@ -15,11 +15,11 @@
   *
   ******************************************************************************
   */
-
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-
+#include <stdbool.h>
+#include <stdio.h>
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
@@ -37,7 +37,7 @@
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-#define SaturaLH(N, L, H) (((N)<(L))?(L):(((N)>(H))?(H):(N)))
+
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
@@ -45,11 +45,41 @@ DFSDM_Filter_HandleTypeDef hdfsdm1_filter0;
 DFSDM_Channel_HandleTypeDef hdfsdm1_channel2;
 DMA_HandleTypeDef hdma_dfsdm1_flt0;
 
-UART_HandleTypeDef huart3;
-DMA_HandleTypeDef hdma_usart3_tx;
+UART_HandleTypeDef huart1;
+DMA_HandleTypeDef hdma_usart1_tx;
 
 /* USER CODE BEGIN PV */
+#define kMaxAudioSampleSize        512
+#define kAudioSampleFrequency      16000
+#define kFeatureSliceSize          40
+#define kFeatureSliceCount         49
+#define kFeatureElementCount       (kFeatureSliceSize * kFeatureSliceCount)
+#define kFeatureSliceStrideMs      20
+#define kFeatureSliceDurationMs    30
+#define kSilenceIndex              0
+#define kUnknownIndex              1
+#define kCategoryCount             4
+#define kDFSDMSamplesPerSlot       1024
+#define kAudioCaptureBufferSize    (kDFSDMSamplesPerSlot * 16)
+extern const char* kCategoryLabels[kCategoryCount];
 
+int last_capture_index = 0;
+volatile bool new_data_ready = false;
+
+
+bool g_is_audio_initialized = false;
+// An internal buffer able to fit 16x our sample size
+int32_t dfsdm_dma_buffer[kDFSDMSamplesPerSlot];
+
+int16_t g_audio_capture_buffer[kAudioCaptureBufferSize];
+// A buffer that holds our output
+int16_t g_audio_output_buffer[kMaxAudioSampleSize];
+int16_t uart_tx_buffer[kDFSDMSamplesPerSlot / 2];   // or correct size
+// Mark as volatile so we can check in a while loop to see if
+// any samples have arrived yet.
+volatile int32_t g_latest_audio_timestamp = 0;
+
+int counter = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -57,15 +87,113 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
 static void MX_DFSDM1_Init(void);
-static void MX_USART3_UART_Init(void);
+static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN PFP */
-uint32_t DmaRecHalfBuffCplt = 0;
-uint32_t DmaRecBuffCplt      = 0;
+
+void CaptureSamples(int half);
+int16_t clamp(int32_t val, int16_t min, int16_t max);
+
+
+//---------------------------------------
+volatile uint8_t uart_tx_ready = 1;
+
+volatile uint8_t tx_done_flag = 0;
+
+uint8_t test_data[] = "Hello DMA UART!\r\n";
+
+void TransmitAudioFrame(int16_t* audio_data, int sample_count) {
+
+   HAL_UART_Transmit_DMA(&huart1, (uint8_t*)audio_data, sample_count * sizeof(int16_t));
+
+
+}
+
+
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
+{
+    if (huart->Instance == USART1)
+    {
+        tx_done_flag = 1; // Mark that TX is complete
+    }
+}
+
+
+
+int16_t clamp(int32_t val, int16_t min, int16_t max) {
+    if (val < min) return min;
+    if (val > max) return max;
+    return val;
+}
+
+
+void CaptureSamples(int half) {
+
+  int start_index = (half == 0) ? 0 : (kDFSDMSamplesPerSlot / 2); // 0 index or 512 index
+
+  // Number of new samples per call
+  int samples_to_copy = kDFSDMSamplesPerSlot / 2; // only half each time
+
+  // Time (ms) of the latest samplef
+  const int32_t time_in_ms = g_latest_audio_timestamp + (samples_to_copy / (kAudioSampleFrequency / 1000));
+
+  const int32_t start_sample_offset = g_latest_audio_timestamp * (kAudioSampleFrequency / 1000);
+
+  // Index in the ring buffer
+  const int capture_index = start_sample_offset % kAudioCaptureBufferSize;
+
+  // Clamp and copy with wrap-around into ring buffer
+  for (int i = 0; i < samples_to_copy; ++i) {
+
+		int32_t raw = dfsdm_dma_buffer[start_index + i];                       // Raw 32-bit DFSDM sample
+		int16_t clamped = clamp(raw, -32768, 32767);             // Clamp to int16_t
+
+		int dest_index = (capture_index + i) % kAudioCaptureBufferSize; // Wrap around
+		g_audio_capture_buffer[dest_index] = clamped;
+
+  }
+
+ //  TransmitAudioFrame(g_audio_capture_buffer+capture_index, samples_to_copy);
+
+
+  last_capture_index = capture_index;
+  new_data_ready = true;
+
+  // Mark the timestamp for next call
+  g_latest_audio_timestamp = time_in_ms;
+}
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-int32_t RecBuff[2048];
+
+
+// External handles (defined by CubeMX)
+
+
+
+/* DMA Half Transfer callback */
+void HAL_DFSDM_FilterRegConvHalfCpltCallback(DFSDM_Filter_HandleTypeDef *hdfsdm_filter) {
+    if (hdfsdm_filter == &hdfsdm1_filter0) {
+       // StreamStereoHalfBuffer(0);
+
+    	CaptureSamples(0);
+    }
+}
+
+/* DMA Full Transfer callback */
+void HAL_DFSDM_FilterRegConvCpltCallback(DFSDM_Filter_HandleTypeDef *hdfsdm_filter) {
+    if (hdfsdm_filter == &hdfsdm1_filter0) {
+
+    	 CaptureSamples(1);
+
+       // StreamStereoHalfBuffer(1);
+    }
+}
+
+
+
+
 /* USER CODE END 0 */
 
 /**
@@ -76,7 +204,6 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-  // uint32_t i;
 
   /* USER CODE END 1 */
 
@@ -93,41 +220,58 @@ int main(void)
   SystemClock_Config();
 
   /* USER CODE BEGIN SysInit */
+
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_DMA_Init();
   MX_DFSDM1_Init();
-  MX_USART3_UART_Init();
+  MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
-  if (HAL_DFSDM_FilterRegularStart_DMA(&hdfsdm1_filter0, RecBuff, 2048) != HAL_OK)
-  {
-    Error_Handler();
-  }
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+  HAL_DFSDM_FilterRegularStart_DMA(&hdfsdm1_filter0, dfsdm_dma_buffer, kDFSDMSamplesPerSlot);
   while (1)
   {
     /* USER CODE END WHILE */
-	    if (DmaRecHalfBuffCplt)
-	    {
-	        DmaRecHalfBuffCplt = 0;
-	        HAL_UART_Transmit(&huart3, (uint8_t*)RecBuff, 1024 * sizeof(int32_t), HAL_MAX_DELAY);
-	    }
 
-	    if (DmaRecBuffCplt)
-	    {
-	        DmaRecBuffCplt = 0;
-	        HAL_UART_Transmit(&huart3, (uint8_t*)&RecBuff[1024], 1024 * sizeof(int32_t), HAL_MAX_DELAY);
-	    }
-	  HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_14);
-	  HAL_Delay(1000);  // 50 ms delay
     /* USER CODE BEGIN 3 */
+
+            if (new_data_ready) {
+                 char msg[] = "Entering loop\r\n";
+            	 HAL_UART_Transmit(&huart1, (uint8_t*)msg, sizeof(msg)-1, HAL_MAX_DELAY);
+
+                // Transmit a full frame starting from last_capture_index
+                int16_t frame_buffer[kDFSDMSamplesPerSlot/2];
+
+                for (int i = 0; i < kDFSDMSamplesPerSlot/2; ++i) {
+                	char dot = '.';
+                	HAL_UART_Transmit(&huart1, (uint8_t*)&dot, 1, HAL_MAX_DELAY);
+                    int idx = (last_capture_index + i) % kAudioCaptureBufferSize;
+                    frame_buffer[i] = g_audio_capture_buffer[idx];
+                    uart_tx_buffer[i] = g_audio_capture_buffer[idx];
+                	counter++;
+                	HAL_Delay(1);
+                }
+
+                if (huart1.gState == HAL_UART_STATE_READY)
+                {
+                    TransmitAudioFrame(frame_buffer, kDFSDMSamplesPerSlot/2);
+                }
+                else {
+                    char msg[] = "TESTING\r\n";
+                    HAL_UART_Transmit(&huart1, (uint8_t*)msg, sizeof(msg)-1, 100);
+                }
+
+                new_data_ready = false;
+            }
+   }
+
   /* USER CODE END 3 */
-}
 }
 
 /**
@@ -234,37 +378,37 @@ static void MX_DFSDM1_Init(void)
 }
 
 /**
-  * @brief USART3 Initialization Function
+  * @brief USART1 Initialization Function
   * @param None
   * @retval None
   */
-static void MX_USART3_UART_Init(void)
+static void MX_USART1_UART_Init(void)
 {
 
-  /* USER CODE BEGIN USART3_Init 0 */
+  /* USER CODE BEGIN USART1_Init 0 */
 
-  /* USER CODE END USART3_Init 0 */
+  /* USER CODE END USART1_Init 0 */
 
-  /* USER CODE BEGIN USART3_Init 1 */
+  /* USER CODE BEGIN USART1_Init 1 */
 
-  /* USER CODE END USART3_Init 1 */
-  huart3.Instance = USART3;
-  huart3.Init.BaudRate = 921600;
-  huart3.Init.WordLength = UART_WORDLENGTH_8B;
-  huart3.Init.StopBits = UART_STOPBITS_1;
-  huart3.Init.Parity = UART_PARITY_NONE;
-  huart3.Init.Mode = UART_MODE_TX_RX;
-  huart3.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-  huart3.Init.OverSampling = UART_OVERSAMPLING_16;
-  huart3.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
-  huart3.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
-  if (HAL_UART_Init(&huart3) != HAL_OK)
+  /* USER CODE END USART1_Init 1 */
+  huart1.Instance = USART1;
+  huart1.Init.BaudRate = 921600;
+  huart1.Init.WordLength = UART_WORDLENGTH_8B;
+  huart1.Init.StopBits = UART_STOPBITS_1;
+  huart1.Init.Parity = UART_PARITY_NONE;
+  huart1.Init.Mode = UART_MODE_TX_RX;
+  huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
+  huart1.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
+  huart1.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
+  if (HAL_UART_Init(&huart1) != HAL_OK)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN USART3_Init 2 */
+  /* USER CODE BEGIN USART1_Init 2 */
 
-  /* USER CODE END USART3_Init 2 */
+  /* USER CODE END USART1_Init 2 */
 
 }
 
@@ -276,14 +420,15 @@ static void MX_DMA_Init(void)
 
   /* DMA controller clock enable */
   __HAL_RCC_DMA1_CLK_ENABLE();
+  __HAL_RCC_DMA2_CLK_ENABLE();
 
   /* DMA interrupt init */
-  /* DMA1_Channel2_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Channel2_IRQn, 0, 0);
-  HAL_NVIC_EnableIRQ(DMA1_Channel2_IRQn);
   /* DMA1_Channel4_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Channel4_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA1_Channel4_IRQn);
+  /* DMA2_Channel6_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Channel6_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Channel6_IRQn);
 
 }
 
@@ -296,13 +441,13 @@ static void MX_GPIO_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
   /* USER CODE BEGIN MX_GPIO_Init_1 */
-  __HAL_RCC_GPIOG_CLK_ENABLE();
+
   /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
-  __HAL_RCC_GPIOD_CLK_ENABLE();
+  __HAL_RCC_GPIOA_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET);
@@ -315,30 +460,12 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
-  /* B-L475E-IOT01A1 user LED (green) on PG14 */
-  GPIO_InitStruct.Pin = GPIO_PIN_14;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOG, &GPIO_InitStruct);
-
-  /* USER CODE BEGIN MX_GPIO_Init_2 */
 
   /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
-void HAL_DFSDM_FilterRegConvHalfCpltCallback(DFSDM_Filter_HandleTypeDef *hdfsdm_filter)
-{
-  (void)hdfsdm_filter;
-  DmaRecHalfBuffCplt = 1;
-}
 
-void HAL_DFSDM_FilterRegConvCpltCallback(DFSDM_Filter_HandleTypeDef *hdfsdm_filter)
-{
-  (void)hdfsdm_filter;
-  DmaRecBuffCplt = 1;
-}
 /* USER CODE END 4 */
 
 /**
@@ -352,8 +479,6 @@ void Error_Handler(void)
   __disable_irq();
   while (1)
   {
-	    HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_14);
-	    HAL_Delay(50);
   }
   /* USER CODE END Error_Handler_Debug */
 }

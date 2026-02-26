@@ -61,13 +61,19 @@ void Error_Handler(void);
 #define DFSDM1_DATIN2_GPIO_Port GPIOE
 #define DFSDM1_CKOUT_Pin GPIO_PIN_9
 #define DFSDM1_CKOUT_GPIO_Port GPIOE
-#define INTERNAL_UART3_TX_Pin GPIO_PIN_8
-#define INTERNAL_UART3_TX_GPIO_Port GPIOD
-#define INTERNAL_UART3_RX_Pin GPIO_PIN_9
-#define INTERNAL_UART3_RX_GPIO_Port GPIOD
 
 /* USER CODE BEGIN Private defines */
+/* Standard HAL */
+#include "stm32l4xx_hal.h"
 
+/* Optional: if you use DFSDM, DMA, or audio alignment macros */
+#include "stm32l4xx_hal_dfsdm.h"
+#include "stm32l4xx_hal_dma.h"
+
+/* Define ALIGN_32BYTES if not defined */
+#ifndef ALIGN_32BYTES
+#define ALIGN_32BYTES(x)  __attribute__((aligned(32))) x
+#endif
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus
