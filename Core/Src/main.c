@@ -80,6 +80,9 @@ int16_t uart_tx_buffer[kDFSDMSamplesPerSlot / 2];   // or correct size
 volatile int32_t g_latest_audio_timestamp = 0;
 
 int counter = 0;
+// *** CHANGE *** transient detection state
+volatile uint8_t transient_done = 0;
+int transient_count = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -104,7 +107,6 @@ uint8_t test_data[] = "Hello DMA UART!\r\n";
 void TransmitAudioFrame(int16_t* audio_data, int sample_count) {
 
    HAL_UART_Transmit_DMA(&huart1, (uint8_t*)audio_data, sample_count * sizeof(int16_t));
-
 
 }
 
@@ -133,7 +135,7 @@ void CaptureSamples(int half) {
   // Number of new samples per call
   int samples_to_copy = kDFSDMSamplesPerSlot / 2; // only half each time
 
-  // Time (ms) of the latest samplef
+  // Time (ms) of the latest sample
   const int32_t time_in_ms = g_latest_audio_timestamp + (samples_to_copy / (kAudioSampleFrequency / 1000));
 
   const int32_t start_sample_offset = g_latest_audio_timestamp * (kAudioSampleFrequency / 1000);
@@ -144,11 +146,19 @@ void CaptureSamples(int half) {
   // Clamp and copy with wrap-around into ring buffer
   for (int i = 0; i < samples_to_copy; ++i) {
 
-		int32_t raw = dfsdm_dma_buffer[start_index + i];                       // Raw 32-bit DFSDM sample
-		int16_t clamped = clamp(raw, -32768, 32767);             // Clamp to int16_t
+		int32_t raw = dfsdm_dma_buffer[start_index + i];           // Raw 32-bit DFSDM sample
 
 		int dest_index = (capture_index + i) % kAudioCaptureBufferSize; // Wrap around
-		g_audio_capture_buffer[dest_index] = clamped;
+		// *** CHANGE *** Properly scale DFSDM 32-bit → 16-bit
+		static int32_t dc_estimate = 0;
+
+		// simple low-pass filter
+		dc_estimate = (dc_estimate * 99 + (raw >> 8)) / 100;
+
+		int16_t sample = (int16_t)((raw >> 8) - dc_estimate) + 4500;
+		//int16_t sample = (int16_t)(raw >> 8);   // adjust shift if needed
+		g_audio_capture_buffer[dest_index] = sample;
+		//g_audio_capture_buffer[dest_index] = raw;
 
   }
 
@@ -192,8 +202,6 @@ void HAL_DFSDM_FilterRegConvCpltCallback(DFSDM_Filter_HandleTypeDef *hdfsdm_filt
 }
 
 
-
-
 /* USER CODE END 0 */
 
 /**
@@ -235,32 +243,63 @@ int main(void)
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   HAL_DFSDM_FilterRegularStart_DMA(&hdfsdm1_filter0, dfsdm_dma_buffer, kDFSDMSamplesPerSlot);
+  // *** CHANGE *** add these ABOVE while(1)
+  static uint8_t transient_done = 0;
   while (1)
   {
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
 
-            if (new_data_ready) {
-                 char msg[] = "Entering loop\r\n";
-            	 HAL_UART_Transmit(&huart1, (uint8_t*)msg, sizeof(msg)-1, HAL_MAX_DELAY);
+            if (new_data_ready){
+                 //char msg[] = "Entering loop\r\n";
+            	 //HAL_UART_Transmit(&huart1, (uint8_t*)msg, sizeof(msg)-1, HAL_MAX_DELAY);
 
                 // Transmit a full frame starting from last_capture_index
                 int16_t frame_buffer[kDFSDMSamplesPerSlot/2];
 
                 for (int i = 0; i < kDFSDMSamplesPerSlot/2; ++i) {
-                	char dot = '.';
-                	HAL_UART_Transmit(&huart1, (uint8_t*)&dot, 1, HAL_MAX_DELAY);
+                	//char dot = '.';
+                	//HAL_UART_Transmit(&huart1, (uint8_t*)&dot, 1, HAL_MAX_DELAY);
                     int idx = (last_capture_index + i) % kAudioCaptureBufferSize;
-                    frame_buffer[i] = g_audio_capture_buffer[idx];
+                    //frame_buffer[i] = g_audio_capture_buffer[idx];
                     uart_tx_buffer[i] = g_audio_capture_buffer[idx];
                 	counter++;
-                	HAL_Delay(1);
                 }
+
+                // *** CHANGE *** transient detection block
+                if (!transient_done)
+                {
+                    int flat_count = 0;
+                    const int THRESHOLD = 20;
+                    const int MIN_FLAT = 40;
+
+                    for (int i = 1; i < kDFSDMSamplesPerSlot/2; i++) {
+                        int diff = uart_tx_buffer[i] - uart_tx_buffer[i - 1];
+                        if (diff < 0) diff = -diff;
+
+                        if (diff < THRESHOLD) {
+                            flat_count++;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    if (flat_count > MIN_FLAT) {
+                        // still transient → skip this frame
+                        new_data_ready = false;
+                        continue;  // *** CHANGE *** do NOT transmit yet
+                    } else {
+                        transient_done = 1;  // done skipping
+                    }
+                }
+
+                // Note: huart1.gState = 0 here
 
                 if (huart1.gState == HAL_UART_STATE_READY)
                 {
-                    TransmitAudioFrame(frame_buffer, kDFSDMSamplesPerSlot/2);
+                	// huart1.gState = 32
+                    TransmitAudioFrame(uart_tx_buffer, kDFSDMSamplesPerSlot/2);
                 }
                 else {
                     char msg[] = "TESTING\r\n";
