@@ -18,11 +18,11 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include <stdbool.h>
-#include <stdio.h>
+
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <stdio.h>
+#include <stdbool.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -41,9 +41,14 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+DAC_HandleTypeDef hdac1;
+DMA_HandleTypeDef hdma_dac_ch1;
+
 DFSDM_Filter_HandleTypeDef hdfsdm1_filter0;
 DFSDM_Channel_HandleTypeDef hdfsdm1_channel2;
 DMA_HandleTypeDef hdma_dfsdm1_flt0;
+
+TIM_HandleTypeDef htim6;
 
 UART_HandleTypeDef huart1;
 DMA_HandleTypeDef hdma_usart1_tx;
@@ -80,9 +85,6 @@ int16_t uart_tx_buffer[kDFSDMSamplesPerSlot / 2];   // or correct size
 volatile int32_t g_latest_audio_timestamp = 0;
 
 int counter = 0;
-// *** CHANGE *** transient detection state
-volatile uint8_t transient_done = 0;
-int transient_count = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -91,8 +93,9 @@ static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
 static void MX_DFSDM1_Init(void);
 static void MX_USART1_UART_Init(void);
+static void MX_DAC1_Init(void);
+static void MX_TIM6_Init(void);
 /* USER CODE BEGIN PFP */
-
 void CaptureSamples(int half);
 int16_t clamp(int32_t val, int16_t min, int16_t max);
 
@@ -108,6 +111,7 @@ void TransmitAudioFrame(int16_t* audio_data, int sample_count) {
 
    HAL_UART_Transmit_DMA(&huart1, (uint8_t*)audio_data, sample_count * sizeof(int16_t));
 
+
 }
 
 
@@ -115,7 +119,7 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
 {
     if (huart->Instance == USART1)
     {
-        tx_done_flag = 1; // Mark that TX is complete
+        uart_tx_ready = 1; // Mark that TX is complete
     }
 }
 
@@ -135,7 +139,7 @@ void CaptureSamples(int half) {
   // Number of new samples per call
   int samples_to_copy = kDFSDMSamplesPerSlot / 2; // only half each time
 
-  // Time (ms) of the latest sample
+  // Time (ms) of the latest samplef
   const int32_t time_in_ms = g_latest_audio_timestamp + (samples_to_copy / (kAudioSampleFrequency / 1000));
 
   const int32_t start_sample_offset = g_latest_audio_timestamp * (kAudioSampleFrequency / 1000);
@@ -146,24 +150,13 @@ void CaptureSamples(int half) {
   // Clamp and copy with wrap-around into ring buffer
   for (int i = 0; i < samples_to_copy; ++i) {
 
-		int32_t raw = dfsdm_dma_buffer[start_index + i];           // Raw 32-bit DFSDM sample
+		int32_t raw = dfsdm_dma_buffer[start_index + i];                       // Raw 32-bit DFSDM sample
+		int16_t clamped = clamp(raw, -32768, 32767);             // Clamp to int16_t
 
 		int dest_index = (capture_index + i) % kAudioCaptureBufferSize; // Wrap around
-		// *** CHANGE *** Properly scale DFSDM 32-bit → 16-bit
-		static int32_t dc_estimate = 0;
-
-		// simple low-pass filter
-		dc_estimate = (dc_estimate * 99 + (raw >> 8)) / 100;
-
-		int16_t sample = (int16_t)((raw >> 8) - dc_estimate) + 4500;
-		//int16_t sample = (int16_t)(raw >> 8);   // adjust shift if needed
-		g_audio_capture_buffer[dest_index] = sample;
-		//g_audio_capture_buffer[dest_index] = raw;
+		g_audio_capture_buffer[dest_index] = clamped;
 
   }
-
- //  TransmitAudioFrame(g_audio_capture_buffer+capture_index, samples_to_copy);
-
 
   last_capture_index = capture_index;
   new_data_ready = true;
@@ -171,17 +164,10 @@ void CaptureSamples(int half) {
   // Mark the timestamp for next call
   g_latest_audio_timestamp = time_in_ms;
 }
-
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
-
-// External handles (defined by CubeMX)
-
-
-
 /* DMA Half Transfer callback */
 void HAL_DFSDM_FilterRegConvHalfCpltCallback(DFSDM_Filter_HandleTypeDef *hdfsdm_filter) {
     if (hdfsdm_filter == &hdfsdm1_filter0) {
@@ -200,8 +186,6 @@ void HAL_DFSDM_FilterRegConvCpltCallback(DFSDM_Filter_HandleTypeDef *hdfsdm_filt
        // StreamStereoHalfBuffer(1);
     }
 }
-
-
 /* USER CODE END 0 */
 
 /**
@@ -236,6 +220,8 @@ int main(void)
   MX_DMA_Init();
   MX_DFSDM1_Init();
   MX_USART1_UART_Init();
+  MX_DAC1_Init();
+  MX_TIM6_Init();
   /* USER CODE BEGIN 2 */
 
   /* USER CODE END 2 */
@@ -244,72 +230,36 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   HAL_DFSDM_FilterRegularStart_DMA(&hdfsdm1_filter0, dfsdm_dma_buffer, kDFSDMSamplesPerSlot);
   // *** CHANGE *** add these ABOVE while(1)
-  static uint8_t transient_done = 0;
   while (1)
   {
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+      if (new_data_ready && uart_tx_ready) {
 
-            if (new_data_ready){
-                 //char msg[] = "Entering loop\r\n";
-            	 //HAL_UART_Transmit(&huart1, (uint8_t*)msg, sizeof(msg)-1, HAL_MAX_DELAY);
+    	  uart_tx_ready = 0;  // mark DMA as busy
 
-                // Transmit a full frame starting from last_capture_index
-                int16_t frame_buffer[kDFSDMSamplesPerSlot/2];
+          // Transmit a full frame starting from last_capture_index
+          int16_t frame_buffer[kDFSDMSamplesPerSlot/2];
 
-                for (int i = 0; i < kDFSDMSamplesPerSlot/2; ++i) {
-                	//char dot = '.';
-                	//HAL_UART_Transmit(&huart1, (uint8_t*)&dot, 1, HAL_MAX_DELAY);
-                    int idx = (last_capture_index + i) % kAudioCaptureBufferSize;
-                    //frame_buffer[i] = g_audio_capture_buffer[idx];
-                    uart_tx_buffer[i] = g_audio_capture_buffer[idx];
-                	counter++;
-                }
+          for (int i = 0; i < kDFSDMSamplesPerSlot/2; ++i) {
+              int idx = (last_capture_index + i) % kAudioCaptureBufferSize;
+              frame_buffer[i] = g_audio_capture_buffer[idx];
+              uart_tx_buffer[i] = g_audio_capture_buffer[idx];
+          	  counter++;
+          	//HAL_Delay(1);
+          }
 
-                // *** CHANGE *** transient detection block
-                if (!transient_done)
-                {
-                    int flat_count = 0;
-                    const int THRESHOLD = 20;
-                    const int MIN_FLAT = 40;
+          if (huart1.gState == HAL_UART_STATE_READY)
+          {
+              TransmitAudioFrame(uart_tx_buffer, kDFSDMSamplesPerSlot/2);
+          }
+          else {
+          }
 
-                    for (int i = 1; i < kDFSDMSamplesPerSlot/2; i++) {
-                        int diff = uart_tx_buffer[i] - uart_tx_buffer[i - 1];
-                        if (diff < 0) diff = -diff;
-
-                        if (diff < THRESHOLD) {
-                            flat_count++;
-                        } else {
-                            break;
-                        }
-                    }
-
-                    if (flat_count > MIN_FLAT) {
-                        // still transient → skip this frame
-                        new_data_ready = false;
-                        continue;  // *** CHANGE *** do NOT transmit yet
-                    } else {
-                        transient_done = 1;  // done skipping
-                    }
-                }
-
-                // Note: huart1.gState = 0 here
-
-                if (huart1.gState == HAL_UART_STATE_READY)
-                {
-                	// huart1.gState = 32
-                    TransmitAudioFrame(uart_tx_buffer, kDFSDMSamplesPerSlot/2);
-                }
-                else {
-                    char msg[] = "TESTING\r\n";
-                    HAL_UART_Transmit(&huart1, (uint8_t*)msg, sizeof(msg)-1, 100);
-                }
-
-                new_data_ready = false;
-            }
-   }
-
+          new_data_ready = false;
+      }
+}
   /* USER CODE END 3 */
 }
 
@@ -361,6 +311,49 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+}
+
+/**
+  * @brief DAC1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_DAC1_Init(void)
+{
+
+  /* USER CODE BEGIN DAC1_Init 0 */
+
+  /* USER CODE END DAC1_Init 0 */
+
+  DAC_ChannelConfTypeDef sConfig = {0};
+
+  /* USER CODE BEGIN DAC1_Init 1 */
+
+  /* USER CODE END DAC1_Init 1 */
+
+  /** DAC Initialization
+  */
+  hdac1.Instance = DAC1;
+  if (HAL_DAC_Init(&hdac1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** DAC channel OUT1 config
+  */
+  sConfig.DAC_SampleAndHold = DAC_SAMPLEANDHOLD_DISABLE;
+  sConfig.DAC_Trigger = DAC_TRIGGER_NONE;
+  sConfig.DAC_OutputBuffer = DAC_OUTPUTBUFFER_ENABLE;
+  sConfig.DAC_ConnectOnChipPeripheral = DAC_CHIPCONNECT_DISABLE;
+  sConfig.DAC_UserTrimming = DAC_TRIMMING_FACTORY;
+  if (HAL_DAC_ConfigChannel(&hdac1, &sConfig, DAC_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN DAC1_Init 2 */
+
+  /* USER CODE END DAC1_Init 2 */
+
 }
 
 /**
@@ -417,6 +410,44 @@ static void MX_DFSDM1_Init(void)
 }
 
 /**
+  * @brief TIM6 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM6_Init(void)
+{
+
+  /* USER CODE BEGIN TIM6_Init 0 */
+
+  /* USER CODE END TIM6_Init 0 */
+
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM6_Init 1 */
+
+  /* USER CODE END TIM6_Init 1 */
+  htim6.Instance = TIM6;
+  htim6.Init.Prescaler = 0;
+  htim6.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim6.Init.Period = 65535;
+  htim6.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim6) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_ENABLE;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim6, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM6_Init 2 */
+
+  /* USER CODE END TIM6_Init 2 */
+
+}
+
+/**
   * @brief USART1 Initialization Function
   * @param None
   * @retval None
@@ -462,6 +493,9 @@ static void MX_DMA_Init(void)
   __HAL_RCC_DMA2_CLK_ENABLE();
 
   /* DMA interrupt init */
+  /* DMA1_Channel3_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel3_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel3_IRQn);
   /* DMA1_Channel4_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Channel4_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA1_Channel4_IRQn);
@@ -484,9 +518,10 @@ static void MX_GPIO_Init(void)
   /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
+  __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
-  __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET);
@@ -497,6 +532,12 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PD9 */
+  GPIO_InitStruct.Pin = GPIO_PIN_9;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
