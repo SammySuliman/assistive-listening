@@ -27,6 +27,8 @@ extern DMA_HandleTypeDef hdma_dac_ch1;
 
 extern DMA_HandleTypeDef hdma_dfsdm1_flt0;
 
+extern DMA_HandleTypeDef hdma_dfsdm1_flt1;
+
 extern DMA_HandleTypeDef hdma_usart1_tx;
 
 /* Private typedef -----------------------------------------------------------*/
@@ -199,9 +201,11 @@ void HAL_DFSDM_FilterMspInit(DFSDM_Filter_HandleTypeDef* hdfsdm_filter)
     }
 
     __HAL_RCC_GPIOE_CLK_ENABLE();
+    __HAL_RCC_GPIOB_CLK_ENABLE();
     /**DFSDM1 GPIO Configuration
     PE7     ------> DFSDM1_DATIN2
     PE9     ------> DFSDM1_CKOUT
+    PB12     ------> DFSDM1_DATIN1
     */
     GPIO_InitStruct.Pin = DFSDM1_DATIN2_Pin|DFSDM1_CKOUT_Pin;
     GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
@@ -210,6 +214,16 @@ void HAL_DFSDM_FilterMspInit(DFSDM_Filter_HandleTypeDef* hdfsdm_filter)
     GPIO_InitStruct.Alternate = GPIO_AF6_DFSDM1;
     HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
+    GPIO_InitStruct.Pin = GPIO_PIN_12;
+    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    GPIO_InitStruct.Alternate = GPIO_AF6_DFSDM1;
+    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+    /* DFSDM1 interrupt Init */
+    HAL_NVIC_SetPriority(DFSDM1_FLT0_IRQn, 0, 0);
+    HAL_NVIC_EnableIRQ(DFSDM1_FLT0_IRQn);
     /* USER CODE BEGIN DFSDM1_MspInit 1 */
 
     /* USER CODE END DFSDM1_MspInit 1 */
@@ -238,6 +252,28 @@ void HAL_DFSDM_FilterMspInit(DFSDM_Filter_HandleTypeDef* hdfsdm_filter)
      Be aware that there is only one channel to perform all the requested DMAs. */
     __HAL_LINKDMA(hdfsdm_filter,hdmaInj,hdma_dfsdm1_flt0);
     __HAL_LINKDMA(hdfsdm_filter,hdmaReg,hdma_dfsdm1_flt0);
+  }
+
+    /* DFSDM1_FLT1 Init */
+  if(hdfsdm_filter->Instance == DFSDM1_Filter1){
+    hdma_dfsdm1_flt1.Instance = DMA1_Channel5;
+    hdma_dfsdm1_flt1.Init.Request = DMA_REQUEST_0;
+    hdma_dfsdm1_flt1.Init.Direction = DMA_PERIPH_TO_MEMORY;
+    hdma_dfsdm1_flt1.Init.PeriphInc = DMA_PINC_DISABLE;
+    hdma_dfsdm1_flt1.Init.MemInc = DMA_MINC_ENABLE;
+    hdma_dfsdm1_flt1.Init.PeriphDataAlignment = DMA_PDATAALIGN_WORD;
+    hdma_dfsdm1_flt1.Init.MemDataAlignment = DMA_MDATAALIGN_WORD;
+    hdma_dfsdm1_flt1.Init.Mode = DMA_CIRCULAR;
+    hdma_dfsdm1_flt1.Init.Priority = DMA_PRIORITY_LOW;
+    if (HAL_DMA_Init(&hdma_dfsdm1_flt1) != HAL_OK)
+    {
+      Error_Handler();
+    }
+
+    /* Several peripheral DMA handle pointers point to the same DMA handle.
+     Be aware that there is only one channel to perform all the requested DMAs. */
+    __HAL_LINKDMA(hdfsdm_filter,hdmaInj,hdma_dfsdm1_flt1);
+    __HAL_LINKDMA(hdfsdm_filter,hdmaReg,hdma_dfsdm1_flt1);
   }
 
 }
@@ -274,9 +310,11 @@ void HAL_DFSDM_ChannelMspInit(DFSDM_Channel_HandleTypeDef* hdfsdm_channel)
     }
 
     __HAL_RCC_GPIOE_CLK_ENABLE();
+    __HAL_RCC_GPIOB_CLK_ENABLE();
     /**DFSDM1 GPIO Configuration
     PE7     ------> DFSDM1_DATIN2
     PE9     ------> DFSDM1_CKOUT
+    PB12     ------> DFSDM1_DATIN1
     */
     GPIO_InitStruct.Pin = DFSDM1_DATIN2_Pin|DFSDM1_CKOUT_Pin;
     GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
@@ -284,6 +322,13 @@ void HAL_DFSDM_ChannelMspInit(DFSDM_Channel_HandleTypeDef* hdfsdm_channel)
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
     GPIO_InitStruct.Alternate = GPIO_AF6_DFSDM1;
     HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
+
+    GPIO_InitStruct.Pin = GPIO_PIN_12;
+    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    GPIO_InitStruct.Alternate = GPIO_AF6_DFSDM1;
+    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
     /* USER CODE BEGIN DFSDM1_MspInit 1 */
 
@@ -314,8 +359,14 @@ void HAL_DFSDM_FilterMspDeInit(DFSDM_Filter_HandleTypeDef* hdfsdm_filter)
     /**DFSDM1 GPIO Configuration
     PE7     ------> DFSDM1_DATIN2
     PE9     ------> DFSDM1_CKOUT
+    PB12     ------> DFSDM1_DATIN1
     */
     HAL_GPIO_DeInit(GPIOE, DFSDM1_DATIN2_Pin|DFSDM1_CKOUT_Pin);
+
+    HAL_GPIO_DeInit(GPIOB, GPIO_PIN_12);
+
+    /* DFSDM1 interrupt DeInit */
+    HAL_NVIC_DisableIRQ(DFSDM1_FLT0_IRQn);
 
     /* DFSDM1 DMA DeInit */
     HAL_DMA_DeInit(hdfsdm_filter->hdmaInj);
@@ -347,8 +398,11 @@ void HAL_DFSDM_ChannelMspDeInit(DFSDM_Channel_HandleTypeDef* hdfsdm_channel)
     /**DFSDM1 GPIO Configuration
     PE7     ------> DFSDM1_DATIN2
     PE9     ------> DFSDM1_CKOUT
+    PB12     ------> DFSDM1_DATIN1
     */
     HAL_GPIO_DeInit(GPIOE, DFSDM1_DATIN2_Pin|DFSDM1_CKOUT_Pin);
+
+    HAL_GPIO_DeInit(GPIOB, GPIO_PIN_12);
 
     /* USER CODE BEGIN DFSDM1_MspDeInit 1 */
 
