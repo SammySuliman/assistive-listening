@@ -72,16 +72,17 @@ DMA_HandleTypeDef hdma_usart1_tx;
 #define kAudioCaptureBufferSize    (kDFSDMSamplesPerSlot * 16)
 extern const char* kCategoryLabels[kCategoryCount];
 
-int last_capture_index = 0;
-volatile bool new_data_ready = false;
-
-
 bool g_is_audio_initialized = false;
 // An internal buffer able to fit 16x our sample size
-int32_t dfsdm_dma_buffer[kDFSDMSamplesPerSlot];
-int32_t dfsdm_dma_buffer_ch1[kDFSDMSamplesPerSlot];
+#define HALF_SIZE (kDFSDMSamplesPerSlot / 2)
 
-int16_t g_audio_capture_buffer[kAudioCaptureBufferSize];
+volatile uint8_t half_ready_f0[2] = {0, 0};
+volatile uint8_t half_ready_f1[2] = {0, 0};
+
+int32_t dfsdm_dma_buffer0[kDFSDMSamplesPerSlot];
+int32_t dfsdm_dma_buffer1[kDFSDMSamplesPerSlot];
+
+int16_t stereo_buffer[kDFSDMSamplesPerSlot]; // 2x HALF interleaved
 // A buffer that holds our output
 int16_t g_audio_output_buffer[kMaxAudioSampleSize];
 int16_t uart_tx_buffer[kDFSDMSamplesPerSlot / 2];   // or correct size
@@ -101,7 +102,6 @@ static void MX_USART1_UART_Init(void);
 static void MX_DAC1_Init(void);
 static void MX_TIM6_Init(void);
 /* USER CODE BEGIN PFP */
-void CaptureSamples(int half, int32_t *src_buffer);
 int16_t clamp(int32_t val, int16_t min, int16_t max);
 
 
@@ -110,7 +110,22 @@ volatile uint8_t uart_tx_ready = 1;
 
 volatile uint8_t tx_done_flag = 0;
 
-uint8_t test_data[] = "Hello DMA UART!\r\n";
+void ProcessHalf(int half)
+{
+    int offset = (half == 0) ? 0 : (kDFSDMSamplesPerSlot / 2);
+
+    for (int i = 0; i < kDFSDMSamplesPerSlot / 2; i++)
+    {
+        int32_t raw0 = dfsdm_dma_buffer0[offset + i];
+        int32_t raw1 = dfsdm_dma_buffer1[offset + i];
+
+        int16_t s0 = (int16_t)(raw0 >> 8);
+        int16_t s1 = (int16_t)(raw1 >> 8);
+
+        stereo_buffer[2*i]     = s0;
+        stereo_buffer[2*i + 1] = s1;
+    }
+}
 
 void TransmitAudioFrame(int16_t* audio_data, int sample_count) {
 
@@ -136,90 +151,29 @@ int16_t clamp(int32_t val, int16_t min, int16_t max) {
     return val;
 }
 
-void CaptureSamples(int half, int32_t *src_buffer)
-{
-    int start_index = (half == 0) ? 0 : (kDFSDMSamplesPerSlot / 2);
-    int samples_to_copy = kDFSDMSamplesPerSlot / 2;
 
-    const int32_t time_in_ms =
-        g_latest_audio_timestamp + (samples_to_copy / (kAudioSampleFrequency / 1000));
-
-    const int32_t start_sample_offset =
-        g_latest_audio_timestamp * (kAudioSampleFrequency / 1000);
-
-    const int capture_index =
-        start_sample_offset % kAudioCaptureBufferSize;
-
-    for (int i = 0; i < samples_to_copy; ++i)
-    {
-        int32_t raw = src_buffer[start_index + i];   // <-- KEY CHANGE
-        int16_t clamped = clamp(raw, -32768, 32767);
-
-        int dest_index = (capture_index + i) % kAudioCaptureBufferSize;
-        g_audio_capture_buffer[dest_index] = clamped;
-    }
-
-    last_capture_index = capture_index;
-    new_data_ready = true;
-
-    g_latest_audio_timestamp = time_in_ms;
-}
-
-//void CaptureSamples(int half, int32_t *src_buffer) {
-
-//  int start_index = (half == 0) ? 0 : (kDFSDMSamplesPerSlot / 2); // 0 index or 512 index
-
-  // Number of new samples per call
-//  int samples_to_copy = kDFSDMSamplesPerSlot / 2; // only half each time
-
-  // Time (ms) of the latest samplef
-//  const int32_t time_in_ms = g_latest_audio_timestamp + (samples_to_copy / (kAudioSampleFrequency / 1000));
-
-//  const int32_t start_sample_offset = g_latest_audio_timestamp * (kAudioSampleFrequency / 1000);
-
-  // Index in the ring buffer
-//  const int capture_index = start_sample_offset % kAudioCaptureBufferSize;
-
-  // Clamp and copy with wrap-around into ring buffer
-//  for (int i = 0; i < samples_to_copy; ++i) {
-
-//		int32_t raw = dfsdm_dma_buffer[start_index + i];                       // Raw 32-bit DFSDM sample
-//		int16_t clamped = clamp(raw, -32768, 32767);             // Clamp to int16_t
-
-//		int dest_index = (capture_index + i) % kAudioCaptureBufferSize; // Wrap around
-//		g_audio_capture_buffer[dest_index] = clamped;
-
-//  }
-
-//  last_capture_index = capture_index;
-//  new_data_ready = true;
-
-  // Mark the timestamp for next call
-//  g_latest_audio_timestamp = time_in_ms;
-//}
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 /* DMA Half Transfer callback */
-void HAL_DFSDM_FilterRegConvHalfCpltCallback(DFSDM_Filter_HandleTypeDef *hdfsdm_filter) {
-    if (hdfsdm_filter == &hdfsdm1_filter0) {
-    	CaptureSamples(0, dfsdm_dma_buffer);
+void HAL_DFSDM_FilterRegConvHalfCpltCallback(DFSDM_Filter_HandleTypeDef *h)
+{
+    if (h == &hdfsdm1_filter0) {
+        half_ready_f0[0] = 1;
     }
-
-    if (hdfsdm_filter == &hdfsdm1_filter1) {
-        CaptureSamples(0, dfsdm_dma_buffer_ch1);
+    if (h == &hdfsdm1_filter1) {
+        half_ready_f1[0] = 1;
     }
 }
 
-/* DMA Full Transfer callback */
-void HAL_DFSDM_FilterRegConvCpltCallback(DFSDM_Filter_HandleTypeDef *hdfsdm_filter) {
-    if (hdfsdm_filter == &hdfsdm1_filter0) {
-    	CaptureSamples(1, dfsdm_dma_buffer);
+void HAL_DFSDM_FilterRegConvCpltCallback(DFSDM_Filter_HandleTypeDef *h)
+{
+    if (h == &hdfsdm1_filter0) {
+        half_ready_f0[1] = 1;
     }
-
-    if (hdfsdm_filter == &hdfsdm1_filter1) {
-        CaptureSamples(1, dfsdm_dma_buffer_ch1);
+    if (h == &hdfsdm1_filter1) {
+        half_ready_f1[1] = 1;
     }
 }
 /* USER CODE END 0 */
@@ -264,10 +218,12 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  HAL_DFSDM_FilterRegularStart_DMA(&hdfsdm1_filter0, dfsdm_dma_buffer, kDFSDMSamplesPerSlot);
+  HAL_DFSDM_FilterRegularStart_DMA(&hdfsdm1_filter0,
+		                            dfsdm_dma_buffer0,
+									kDFSDMSamplesPerSlot);
 
   HAL_DFSDM_FilterRegularStart_DMA(&hdfsdm1_filter1,
-                                    dfsdm_dma_buffer_ch1,
+                                    dfsdm_dma_buffer1,
                                     kDFSDMSamplesPerSlot);
   // *** CHANGE *** add these ABOVE while(1)
   while (1)
@@ -275,31 +231,28 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-      if (new_data_ready && uart_tx_ready) {
+	  if (half_ready_f0[0] && half_ready_f1[0] && uart_tx_ready)
+	  {
+	      half_ready_f0[0] = 0;
+	      half_ready_f1[0] = 0;
 
-    	  uart_tx_ready = 0;  // mark DMA as busy
+	      uart_tx_ready = 0;
 
-          // Transmit a full frame starting from last_capture_index
-          int16_t frame_buffer[kDFSDMSamplesPerSlot/2];
+	      ProcessHalf(0);
+	      TransmitAudioFrame(stereo_buffer, kDFSDMSamplesPerSlot);
+	  }
 
-          for (int i = 0; i < kDFSDMSamplesPerSlot/2; ++i) {
-              int idx = (last_capture_index + i) % kAudioCaptureBufferSize;
-              frame_buffer[i] = g_audio_capture_buffer[idx];
-              uart_tx_buffer[i] = g_audio_capture_buffer[idx];
-          	  counter++;
-          	//HAL_Delay(1);
-          }
+	  if (half_ready_f0[1] && half_ready_f1[1] && uart_tx_ready)
+	  {
+	      half_ready_f0[1] = 0;
+	      half_ready_f1[1] = 0;
 
-          if (huart1.gState == HAL_UART_STATE_READY)
-          {
-              TransmitAudioFrame(uart_tx_buffer, kDFSDMSamplesPerSlot/2);
-          }
-          else {
-          }
+	      uart_tx_ready = 0;
 
-          new_data_ready = false;
-      }
-}
+	      ProcessHalf(1);
+	      TransmitAudioFrame(stereo_buffer, kDFSDMSamplesPerSlot);
+	  }
+  }
   /* USER CODE END 3 */
 }
 
@@ -425,7 +378,7 @@ static void MX_DFSDM1_Init(void)
   hdfsdm1_filter1.Instance = DFSDM1_Filter1;
   hdfsdm1_filter1.Init.RegularParam.Trigger = DFSDM_FILTER_SW_TRIGGER;
   hdfsdm1_filter1.Init.RegularParam.FastMode = ENABLE;
-  hdfsdm1_filter1.Init.RegularParam.DmaMode = DISABLE;
+  hdfsdm1_filter1.Init.RegularParam.DmaMode = ENABLE;
   hdfsdm1_filter1.Init.FilterParam.SincOrder = DFSDM_FILTER_FASTSINC_ORDER;
   hdfsdm1_filter1.Init.FilterParam.Oversampling = 200;
   hdfsdm1_filter1.Init.FilterParam.IntOversampling = 1;
