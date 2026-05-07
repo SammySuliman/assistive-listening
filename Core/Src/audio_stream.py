@@ -2,7 +2,6 @@ import serial
 import serial.tools.list_ports
 import numpy as np
 import wave
-import time
 
 def find_stm32_port():
     for port in serial.tools.list_ports.comports():
@@ -15,9 +14,10 @@ def find_stm32_port():
 SERIAL_PORT = find_stm32_port()
 BAUD_RATE = 921600
 
-SAMPLES_PER_FRAME = 1024
+CHANNELS = 2
+INTERLEAVED_SAMPLES_PER_FRAME = 1024
 BYTES_PER_SAMPLE = 2
-FRAME_SIZE = SAMPLES_PER_FRAME * BYTES_PER_SAMPLE
+FRAME_SIZE = INTERLEAVED_SAMPLES_PER_FRAME * BYTES_PER_SAMPLE
 
 OUTPUT_WAV_FILE = "received_audio.wav"
 SAMPLE_RATE = 16000
@@ -29,19 +29,20 @@ def main():
     audio_data = []
 
     try:
-        start_time = time.time()
         print("Receiving audio... Press Ctrl+C to stop and save")
 
         while True:
-            print("hello hello")
-            data = ser.read(FRAME_SIZE)  # read up to 1024 samples (2048 bytes)
+            data = ser.read(FRAME_SIZE)
             if data:
-                print("goodbye goodbye")
-                if len(data) % 2 != 0:
-                    # Make sure we have even number of bytes for int16 conversion
+                if len(data) % BYTES_PER_SAMPLE != 0:
                     data = data[:-1]
-                print(f"Received {len(data)} bytes")
+
                 samples = np.frombuffer(data, dtype=np.int16)
+
+                # The STM32 sends interleaved stereo int16 samples: L, R, L, R...
+                if len(samples) % CHANNELS != 0:
+                    samples = samples[:len(samples) - (len(samples) % CHANNELS)]
+
                 audio_data.append(samples)
 
     except KeyboardInterrupt:
@@ -58,12 +59,13 @@ def main():
 
     # Save to WAV file
     with wave.open(OUTPUT_WAV_FILE, 'wb') as wf:
-        wf.setnchannels(1)          # Mono audio
+        wf.setnchannels(CHANNELS)
         wf.setsampwidth(2)          # 16-bit samples
         wf.setframerate(SAMPLE_RATE)
         wf.writeframes(all_samples.tobytes())
 
-    print(f"Saved {len(all_samples)} samples to {OUTPUT_WAV_FILE}")
+    stereo_frames = len(all_samples) // CHANNELS
+    print(f"Saved {stereo_frames} stereo frames to {OUTPUT_WAV_FILE}")
 
 if __name__ == "__main__":
     main()

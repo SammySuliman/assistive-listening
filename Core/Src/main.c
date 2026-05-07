@@ -70,6 +70,7 @@ DMA_HandleTypeDef hdma_usart1_tx;
 #define kCategoryCount             4
 #define kDFSDMSamplesPerSlot       1024
 #define kAudioCaptureBufferSize    (kDFSDMSamplesPerSlot * 16)
+#define kUartAudioGain             16
 extern const char* kCategoryLabels[kCategoryCount];
 
 bool g_is_audio_initialized = false;
@@ -119,8 +120,11 @@ void ProcessHalf(int half)
         int32_t raw0 = dfsdm_dma_buffer0[offset + i];
         int32_t raw1 = dfsdm_dma_buffer1[offset + i];
 
-        int16_t s0 = (int16_t)(raw0 >> 8);
-        int16_t s1 = (int16_t)(raw1 >> 8);
+        int32_t scaled0 = (raw0 >> 8) * kUartAudioGain;
+        int32_t scaled1 = (raw1 >> 8) * kUartAudioGain;
+
+        int16_t s0 = clamp(scaled0, -32768, 32767);
+        int16_t s1 = clamp(scaled1, -32768, 32767);
 
         stereo_buffer[2*i]     = s0;
         stereo_buffer[2*i + 1] = s1;
@@ -130,7 +134,6 @@ void ProcessHalf(int half)
 void TransmitAudioFrame(int16_t* audio_data, int sample_count) {
 
    HAL_UART_Transmit_DMA(&huart1, (uint8_t*)audio_data, sample_count * sizeof(int16_t));
-
 
 }
 
@@ -225,31 +228,33 @@ int main(void)
   HAL_DFSDM_FilterRegularStart_DMA(&hdfsdm1_filter1,
                                     dfsdm_dma_buffer1,
                                     kDFSDMSamplesPerSlot);
-  // *** CHANGE *** add these ABOVE while(1)
+
   while (1)
   {
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-	  if (half_ready_f0[0] && half_ready_f1[0] && uart_tx_ready)
+	  if (half_ready_f0[0] && uart_tx_ready)
 	  {
-	      half_ready_f0[0] = 0;
-	      half_ready_f1[0] = 0;
-
 	      uart_tx_ready = 0;
 
 	      ProcessHalf(0);
+
+	      half_ready_f0[0] = 0;
+	      half_ready_f1[0] = 0;
+
 	      TransmitAudioFrame(stereo_buffer, kDFSDMSamplesPerSlot);
 	  }
 
-	  if (half_ready_f0[1] && half_ready_f1[1] && uart_tx_ready)
+	  if (half_ready_f0[1] && uart_tx_ready)
 	  {
-	      half_ready_f0[1] = 0;
-	      half_ready_f1[1] = 0;
-
 	      uart_tx_ready = 0;
 
 	      ProcessHalf(1);
+
+	      half_ready_f0[1] = 0;
+	      half_ready_f1[1] = 0;
+
 	      TransmitAudioFrame(stereo_buffer, kDFSDMSamplesPerSlot);
 	  }
   }
@@ -376,7 +381,7 @@ static void MX_DFSDM1_Init(void)
     Error_Handler();
   }
   hdfsdm1_filter1.Instance = DFSDM1_Filter1;
-  hdfsdm1_filter1.Init.RegularParam.Trigger = DFSDM_FILTER_SW_TRIGGER;
+  hdfsdm1_filter1.Init.RegularParam.Trigger = DFSDM_FILTER_SYNC_TRIGGER;
   hdfsdm1_filter1.Init.RegularParam.FastMode = ENABLE;
   hdfsdm1_filter1.Init.RegularParam.DmaMode = ENABLE;
   hdfsdm1_filter1.Init.FilterParam.SincOrder = DFSDM_FILTER_FASTSINC_ORDER;
@@ -405,7 +410,10 @@ static void MX_DFSDM1_Init(void)
   hdfsdm1_channel1.Init.OutputClock.Divider = 25;
   hdfsdm1_channel1.Init.Input.Multiplexer = DFSDM_CHANNEL_EXTERNAL_INPUTS;
   hdfsdm1_channel1.Init.Input.DataPacking = DFSDM_CHANNEL_STANDARD_MODE;
-  hdfsdm1_channel1.Init.Input.Pins = DFSDM_CHANNEL_SAME_CHANNEL_PINS;
+  /* B-L475E-IOT01A routes both onboard MP34DT01 microphones to DFSDM1_DATIN2.
+   * Keep channel 1 on the following channel pins so it also samples DATIN2;
+   * CubeMX regeneration may overwrite this back to SAME_CHANNEL_PINS. */
+  hdfsdm1_channel1.Init.Input.Pins = DFSDM_CHANNEL_FOLLOWING_CHANNEL_PINS;
   hdfsdm1_channel1.Init.SerialInterface.Type = DFSDM_CHANNEL_SPI_FALLING;
   hdfsdm1_channel1.Init.SerialInterface.SpiClock = DFSDM_CHANNEL_SPI_CLOCK_INTERNAL;
   hdfsdm1_channel1.Init.Awd.FilterOrder = DFSDM_CHANNEL_FASTSINC_ORDER;
