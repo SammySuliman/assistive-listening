@@ -221,20 +221,20 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  HAL_DFSDM_FilterRegularStart_DMA(&hdfsdm1_filter0,
-		                            dfsdm_dma_buffer0,
-									kDFSDMSamplesPerSlot);
-
   HAL_DFSDM_FilterRegularStart_DMA(&hdfsdm1_filter1,
                                     dfsdm_dma_buffer1,
                                     kDFSDMSamplesPerSlot);
+
+  HAL_DFSDM_FilterRegularStart_DMA(&hdfsdm1_filter0,
+		                            dfsdm_dma_buffer0,
+									kDFSDMSamplesPerSlot);
 
   while (1)
   {
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-	  if (half_ready_f0[0] && uart_tx_ready)
+	  if (half_ready_f0[0] && half_ready_f1[0] && uart_tx_ready)
 	  {
 	      uart_tx_ready = 0;
 
@@ -246,7 +246,7 @@ int main(void)
 	      TransmitAudioFrame(stereo_buffer, kDFSDMSamplesPerSlot);
 	  }
 
-	  if (half_ready_f0[1] && uart_tx_ready)
+	  if (half_ready_f0[1] && half_ready_f1[1] && uart_tx_ready)
 	  {
 	      uart_tx_ready = 0;
 
