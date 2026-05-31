@@ -15,14 +15,14 @@ cmake_policy(SET CMP0065 NEW)
 cmake_policy(SET CMP0083 NEW)
 cmake_policy(SET CMP0155 OLD)
 include("${CMAKE_ROOT}/Modules/Internal/HeaderpadWorkaround.cmake")
-set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "C:/Users/sammy/STM32CubeIDE/workspace_1.19.0/assistive-listening/build/debug/CMakeFiles/CMakeScratch/TryCompile-ck61ci")
-add_library(cmTC_3ca25 STATIC)
-target_sources(cmTC_3ca25 PRIVATE
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "C:/Users/sammy/STM32CubeIDE/workspace_1.19.0/assistive-listening/build/debug/CMakeFiles/CMakeScratch/TryCompile-hl1c58")
+add_library(cmTC_93c2c STATIC)
+target_sources(cmTC_93c2c PRIVATE
   "C:/ST/STM32CubeCLT_1.20.0/CMake/share/cmake-3.28/Modules/CMakeCCompilerABI.c"
 )
-file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/cmTC_3ca25_loc"
-     CONTENT $<TARGET_FILE:cmTC_3ca25>)
-set_property(TARGET cmTC_3ca25 PROPERTY "C_EXTENSIONS" "ON")
-set_property(TARGET cmTC_3ca25 PROPERTY "C_STANDARD" "11")
-set_property(TARGET cmTC_3ca25 PROPERTY "C_STANDARD_REQUIRED" "ON")
-target_link_libraries(cmTC_3ca25 ${LINK_LIBRARIES})
+file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/cmTC_93c2c_loc"
+     CONTENT $<TARGET_FILE:cmTC_93c2c>)
+set_property(TARGET cmTC_93c2c PROPERTY "C_EXTENSIONS" "ON")
+set_property(TARGET cmTC_93c2c PROPERTY "C_STANDARD" "11")
+set_property(TARGET cmTC_93c2c PROPERTY "C_STANDARD_REQUIRED" "ON")
+target_link_libraries(cmTC_93c2c ${LINK_LIBRARIES})

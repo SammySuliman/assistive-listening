@@ -70,7 +70,7 @@ DMA_HandleTypeDef hdma_usart1_tx;
 #define kCategoryCount             4
 #define kDFSDMSamplesPerSlot       1024
 #define kAudioCaptureBufferSize    (kDFSDMSamplesPerSlot * 16)
-#define kUartAudioGain             16
+#define kUartAudioGain             4
 extern const char* kCategoryLabels[kCategoryCount];
 
 bool g_is_audio_initialized = false;
@@ -84,6 +84,7 @@ int32_t dfsdm_dma_buffer0[kDFSDMSamplesPerSlot];
 int32_t dfsdm_dma_buffer1[kDFSDMSamplesPerSlot];
 
 int16_t stereo_buffer[kDFSDMSamplesPerSlot]; // 2x HALF interleaved
+int16_t beamformed_buffer[HALF_SIZE];   // mono output, 512 samples
 // A buffer that holds our output
 int16_t g_audio_output_buffer[kMaxAudioSampleSize];
 int16_t uart_tx_buffer[kDFSDMSamplesPerSlot / 2];   // or correct size
@@ -92,6 +93,12 @@ int16_t uart_tx_buffer[kDFSDMSamplesPerSlot / 2];   // or correct size
 volatile int32_t g_latest_audio_timestamp = 0;
 
 int counter = 0;
+
+#define BEAMFORM_GAIN_SHIFT     1   // divide by 2 after adding two mics
+#define BEAMFORM_DELAY_SAMPLES  1
+
+int16_t beamform_delay_s1_history = 0;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -126,8 +133,20 @@ void ProcessHalf(int half)
         int16_t s0 = clamp(scaled0, -32768, 32767);
         int16_t s1 = clamp(scaled1, -32768, 32767);
 
-        stereo_buffer[2*i]     = s0;
-        stereo_buffer[2*i + 1] = s1;
+        //stereo_buffer[2*i]     = s0;
+        //stereo_buffer[2*i + 1] = s1;
+
+        int16_t delayed_s1 = s1;
+
+#if BEAMFORM_DELAY_SAMPLES == 1
+        delayed_s1 = beamform_delay_s1_history;
+        beamform_delay_s1_history = s1;
+#endif
+
+        int32_t beamformed = ((int32_t)s0 + (int32_t)delayed_s1) >> BEAMFORM_GAIN_SHIFT;
+
+        beamformed_buffer[i] = clamp(beamformed, -32768, 32767);
+        //beamformed_buffer[i] = s0;
     }
 }
 
@@ -243,7 +262,8 @@ int main(void)
 	      half_ready_f0[0] = 0;
 	      half_ready_f1[0] = 0;
 
-	      TransmitAudioFrame(stereo_buffer, kDFSDMSamplesPerSlot);
+	      //TransmitAudioFrame(stereo_buffer, kDFSDMSamplesPerSlot);
+	      TransmitAudioFrame(beamformed_buffer, HALF_SIZE);
 	  }
 
 	  if (half_ready_f0[1] && half_ready_f1[1] && uart_tx_ready)
@@ -255,7 +275,8 @@ int main(void)
 	      half_ready_f0[1] = 0;
 	      half_ready_f1[1] = 0;
 
-	      TransmitAudioFrame(stereo_buffer, kDFSDMSamplesPerSlot);
+	      //TransmitAudioFrame(stereo_buffer, kDFSDMSamplesPerSlot);
+	      TransmitAudioFrame(beamformed_buffer, HALF_SIZE);
 	  }
   }
   /* USER CODE END 3 */

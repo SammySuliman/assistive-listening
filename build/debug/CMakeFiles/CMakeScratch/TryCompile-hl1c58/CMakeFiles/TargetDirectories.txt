@@ -1,0 +1,3 @@
+C:/Users/sammy/STM32CubeIDE/workspace_1.19.0/assistive-listening/build/debug/CMakeFiles/CMakeScratch/TryCompile-hl1c58/CMakeFiles/cmTC_93c2c.dir
+C:/Users/sammy/STM32CubeIDE/workspace_1.19.0/assistive-listening/build/debug/CMakeFiles/CMakeScratch/TryCompile-hl1c58/CMakeFiles/edit_cache.dir
+C:/Users/sammy/STM32CubeIDE/workspace_1.19.0/assistive-listening/build/debug/CMakeFiles/CMakeScratch/TryCompile-hl1c58/CMakeFiles/rebuild_cache.dir

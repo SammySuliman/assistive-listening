@@ -1,3 +1,0 @@
-C:/Users/sammy/STM32CubeIDE/workspace_1.19.0/assistive-listening/build/debug/CMakeFiles/CMakeScratch/TryCompile-ck61ci/CMakeFiles/cmTC_3ca25.dir
-C:/Users/sammy/STM32CubeIDE/workspace_1.19.0/assistive-listening/build/debug/CMakeFiles/CMakeScratch/TryCompile-ck61ci/CMakeFiles/edit_cache.dir
-C:/Users/sammy/STM32CubeIDE/workspace_1.19.0/assistive-listening/build/debug/CMakeFiles/CMakeScratch/TryCompile-ck61ci/CMakeFiles/rebuild_cache.dir

@@ -23,7 +23,7 @@ SAMPLES_PER_FRAME = 512
 BYTES_PER_SAMPLE = 2
 FRAME_SIZE = SAMPLES_PER_FRAME * BYTES_PER_SAMPLE
 
-OUTPUT_WAV_FILE = "received_audio_beamformed.wav"
+OUTPUT_WAV_FILE = "received_audio_w_beamforming.wav"
 SAMPLE_RATE = 16000
 
 def main():

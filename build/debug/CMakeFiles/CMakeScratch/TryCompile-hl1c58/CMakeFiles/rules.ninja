@@ -14,7 +14,7 @@
 #############################################
 # Rule for compiling C files.
 
-rule C_COMPILER__cmTC_3ca25_unscanned_
+rule C_COMPILER__cmTC_93c2c_unscanned_
   depfile = $DEP_FILE
   deps = gcc
   command = ${LAUNCHER}${CODE_CHECK}C:\ST\STM32CubeCLT_1.20.0\GNU-tools-for-STM32\bin\arm-none-eabi-gcc.exe $DEFINES $INCLUDES $FLAGS -o $out -c $in
@@ -24,7 +24,7 @@ rule C_COMPILER__cmTC_3ca25_unscanned_
 #############################################
 # Rule for linking C static library.
 
-rule C_STATIC_LIBRARY_LINKER__cmTC_3ca25_
+rule C_STATIC_LIBRARY_LINKER__cmTC_93c2c_
   command = C:\WINDOWS\system32\cmd.exe /C "$PRE_LINK && C:\ST\STM32CubeCLT_1.20.0\CMake\bin\cmake.exe -E rm -f $TARGET_FILE && C:\ST\STM32CubeCLT_1.20.0\GNU-tools-for-STM32\bin\arm-none-eabi-ar.exe qc $TARGET_FILE $LINK_FLAGS $in && C:\ST\STM32CubeCLT_1.20.0\GNU-tools-for-STM32\bin\arm-none-eabi-ranlib.exe $TARGET_FILE && $POST_BUILD"
   description = Linking C static library $TARGET_FILE
   restat = $RESTAT
