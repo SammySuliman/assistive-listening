@@ -39,6 +39,12 @@ The current UART output format on `main` is:
 Intended sample rate: 16 kHz
 ```
 
+To record the beamformed version, use:
+
+```powershell
+python Core\Src\beamformed_stream.py
+```
+
 ## Stereo Non-Beamformed Branch
 
 There is a separate branch for recording the raw two-microphone stereo stream:
@@ -67,3 +73,7 @@ The stereo stream format is:
 2048 bytes per frame
 Intended sample rate: 16 kHz
 ```
+
+## Example Recordings
+
+`Core/Src/received_audio_w_beamforming.wav` and `Core/Src/received_audio_wo_beamforming.wav` are example recordings of speaking in front of the microphones on the board while music plays in the background. They demonstrate how background audio is attenuated when beamforming is enabled.
