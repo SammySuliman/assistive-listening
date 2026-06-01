@@ -1,4 +1,4 @@
-This is the code for the first iteration of my project to solve the "cocktail party problem".
+This is the code for the first iteration of my embedded design project to solve the "cocktail party problem".
 
 From Wikipedia:
 
