@@ -37,20 +37,33 @@ The current UART output format on `main` is:
 512 int16 samples per frame
 1024 bytes per frame
 Intended sample rate: 16 kHz
+```
 
 ## Stereo Non-Beamformed Branch
+
 There is a separate branch for recording the raw two-microphone stereo stream:
 
+```text
 stereo-non-beamformed
+```
+
 That branch records true interleaved stereo with no beamforming:
 
+```text
 mic0, mic1, mic0, mic1, ...
+```
+
 The matching receiver script for that branch is:
 
+```powershell
 python Core\Src\audio_stream.py
+```
+
 The stereo stream format is:
 
+```text
 2 channels
 1024 interleaved int16 samples per frame
 2048 bytes per frame
 Intended sample rate: 16 kHz
+```
