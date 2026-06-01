@@ -1,12 +1,13 @@
 This is the code for the first iteration of my project to solve the "cocktail party problem".
 
 From Wikipedia:
-"The cocktail party effect refers to a phenomenon wherein the brain focuses a person's attention on a particular stimulus, usually auditory.
-This focus excludes a range of other stimuli from conscious awareness, as when a partygoer follows a single conversation in a noisy room.
-This ability is widely distributed among humans, with most listeners more or less easily able to portion the totality of sound detected by the ears into distinct streams,
-and subsequently to decide which streams are most pertinent, excluding all or most others...
-A person who lacks the ability to segregate stimuli in this way is often said to display the cocktail party problem or cocktail party deafness. 
-This may also be described as auditory processing disorder or King-Kopetzky syndrome."
+
+> "The cocktail party effect refers to a phenomenon wherein the brain focuses a person's attention on a particular stimulus, usually auditory.
+> This focus excludes a range of other stimuli from conscious awareness, as when a partygoer follows a single conversation in a noisy room.
+> This ability is widely distributed among humans, with most listeners more or less easily able to portion the totality of sound detected by the ears into distinct streams,
+> and subsequently to decide which streams are most pertinent, excluding all or most others...
+> A person who lacks the ability to segregate stimuli in this way is often said to display the cocktail party problem or cocktail party deafness.
+> This may also be described as auditory processing disorder or King-Kopetzky syndrome."
 
 ## Hardware Target
 
